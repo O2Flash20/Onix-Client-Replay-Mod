@@ -27,7 +27,7 @@ function readPosition(file)
     local y = file:readFloat()
     local z = file:readFloat()
 
-    return { x, y, z }
+    return x, y, z
 end
 
 function handleReplayFile(path)
