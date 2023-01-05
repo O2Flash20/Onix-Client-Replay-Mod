@@ -48,16 +48,17 @@ function readPacket(file)
     if packetId == 1 then -- Blocks
         local blockslength = file:readUInt()
         for i = 0, blockslength do
+            -- !blocks positions will be an Int, not a float
             local x, y, z = readPosition(file)
             local blockId = file:readUInt()
             local blockData = file:readByte()
 
-            table.insert(data, {x=x, y=y, z=z, blockId=blockId, blockData=blockData})
+            table.insert(data, { x = x, y = y, z = z, blockId = blockId, blockData = blockData })
         end
     elseif packetId == 2 then -- Player
         x, y, z = readPosition(file)
         data = {
-            x=x, y=y, z=z,
+            x = x, y = y, z = z,
             playerId = file:readUInt(),
             pitch = file:readByte(),
             yaw = file:readByte(),
