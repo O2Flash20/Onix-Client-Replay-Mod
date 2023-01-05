@@ -17,19 +17,6 @@ importLib("blockFromId")
 
 start = false
 
--- function startRec()
---     start = true
--- end
--- client.settings.addFunction("start", "startRec", "START")
-
-function readPosition(file)
-    local x = file:readFloat()
-    local y = file:readFloat()
-    local z = file:readFloat()
-
-    return x, y, z
-end
-
 function handleReplayFile(path)
     local file = fs.open(path, "r")
     if file == nil then return nil end
@@ -48,15 +35,14 @@ function readPacket(file)
     if packetId == 1 then -- Blocks
         local blockslength = file:readUInt()
         for i = 0, blockslength do
-            -- !blocks positions will be an Int, not a float
-            local x, y, z = readPosition(file)
+            local x, y, z = file:readInt(), file:readInt(), file:readInt()
             local blockId = file:readUInt()
             local blockData = file:readByte()
 
             table.insert(data, { x = x, y = y, z = z, blockId = blockId, blockData = blockData })
         end
     elseif packetId == 2 then -- Player
-        x, y, z = readPosition(file)
+        x, y, z = file:readFloat(), file:readFloat(), file:readFloat()
         data = {
             x = x, y = y, z = z,
             playerId = file:readUInt(),
