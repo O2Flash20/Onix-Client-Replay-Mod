@@ -118,7 +118,7 @@ function worldFromFile()
 end
 
 client.settings.addFunction("Load World", "worldFromFile", "Enter")
-registerCommand("loadworld", function () worldFromFile() end) -- I'm on touchpad atm so this is less painful
+registerCommand("loadworld", function () worldFromFile() end) -- I'm on touchpad atm so this is less painful // this seems to crash my game every time???
 
 ------------------------------------------------------------
 
