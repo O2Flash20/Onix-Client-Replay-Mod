@@ -1,3 +1,5 @@
+-- Use replayMod.lua instead
+
 name = "Replay Mod Playback"
 description = "Watch a recorded replay!"
 
@@ -22,7 +24,7 @@ replayFile = nil
 --     local file = fs.open(path, "r")
 --     if file == nil then return nil end
 
---     while ~file:eof() do
+--     while not file:eof() do
 --         local packetId, packetData = readPacket(file)
 --         log(packetData)
 --         -- TODO: actually play back the replay
@@ -55,20 +57,43 @@ function readPacket(file)
     return packetId, data
 end
 
+function onEnable()
+    print("This sucks - use replayMod.lua")
+
+    -- updateData()
+    -- print("Block data updated")
+end
+
+registerCommand("togglereplay", function ()
+    start = not start
+    -- updateData()
+    replayFile = fs.open("InitialScanTest.replay", "r")
+    print("Replay toggled " .. (start and "on." or "off."))
+end)
+
+blockList = {}
+
 function update()
     if start == false then return nil end
-
-    replayFile = fs.open("./InitialScanTest.replay", "r")
     if replayFile == nil then return nil end
-
     if replayFile:eof() then return replayFile:close() end
+
+    -- This is super slow but it works
+    if #blockList > 0 then
+        local block = table.remove(blockList, 1)
+        client.execute("execute /setblock " .. block.x .. " " .. block.y .. " " .. block.z .. " " .. blockNameFromID(block.id) .. " " .. block.data)
+        return
+    end
 
     local packetId, data = readPacket(replayFile)
     if packetId == 1 then
         -- Blocks
-        for _, block in pairs(data) do
-            client.execute("execute /setblock " .. block.x .. " " .. block.y .. " " .. block.z .. " " .. blockNameFromID(block.id) .. " " .. block.data)
-            -- sleep(10)
-        end
+        blockList = table.clone(data)
+        -- for _, block in pairs(data) do
+        --     -- print(tableToJson(block))
+        --     -- print(blockNameFromID(block.id))
+        --     client.execute("execute /setblock " .. block.x .. " " .. block.y .. " " .. block.z .. " " .. blockNameFromID(block.id) .. " " .. block.data)
+        --     -- sleep(10)
+        -- end
     end
 end

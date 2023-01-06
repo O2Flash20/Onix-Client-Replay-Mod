@@ -8,6 +8,11 @@ importLib("blockFromId")
 
 registerCommand("updateData", function() updateData() print("Updated data.") end)
 
+function onEnable()
+    updateData()
+    print("Block data updated.")
+end
+
 -- SETTINGS --------------------------------------------
 status = "Waiting to record."
 recording = false
@@ -85,7 +90,7 @@ function readSingleBlockData(file)
     table.insert(output, file:readInt()) --x
     table.insert(output, file:readInt()) --y
     table.insert(output, file:readInt()) --z
-    table.insert(output, file:readUShort()) -- block id -> name (does this not work or am i doing it all wrong? returns nil)
+    table.insert(output, file:readUShort()) -- block id -> name (does this not work or am i doing it all wrong? returns nil) -- no my lib was just broken
     table.insert(output, file:readByte()) --data
 
     return output
@@ -100,8 +105,11 @@ function worldFromFile()
 
         for i = 1, amountOfBlocks do
             data = readSingleBlockData(file)
+            local name = blockNameFromID(data[4])
+            print(name or ("nope" .. data[4]))
+            -- blockFromId should be fixed now
             client.execute(
-                "execute /setblock " .. data[1] .. " " .. data[2] .. " " .. data[3] .. " " .. "planks" .. " " .. data[5]
+                "execute /setblock ~" .. data[1] .. " ~" .. data[2] .. " ~" .. data[3] .. " " .. blockNameFromID(data[4]) .. " " .. data[5]
             )
         end
 
