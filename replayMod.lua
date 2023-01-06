@@ -4,6 +4,9 @@ description = "Record a section of your world/server, then watch it back later!"
 workingDir = "RoamingState/OnixClient/Scripts/Data/ReplayMod"
 
 importLib("logger")
+importLib("blockFromId")
+
+registerCommand("updateData", function() updateData() print("Updated data.") end)
 
 -- SETTINGS --------------------------------------------
 status = "Waiting to record."
@@ -21,6 +24,7 @@ function startRecording()
     fs.delete(fileName.value .. ".replay")
     saveFile = fs.open(fileName.value .. ".replay", 'w')
 
+    -- move the "cursor" so that there's space for the packet id and amount of blocks at the front
     saveFile:seek(5)
 end
 
@@ -74,7 +78,38 @@ function test()
     end
 end
 
-client.settings.addFunction("Test Button", "test", "Enter")
+client.settings.addFunction("Convert .replay to .txt", "test", "Enter")
+
+function readSingleBlockData(file)
+    local output = {}
+    table.insert(output, file:readInt()) --x
+    table.insert(output, file:readInt()) --y
+    table.insert(output, file:readInt()) --z
+    table.insert(output, file:readUShort()) -- block id -> name (does this not work or am i doing it all wrong? returns nil)
+    table.insert(output, file:readByte()) --data
+
+    return output
+end
+
+function worldFromFile()
+    local file = fs.open(fileName.value .. ".replay", "r")
+    if file then
+        print(file:readByte())
+        local amountOfBlocks = file:readUInt()
+        print(amountOfBlocks)
+
+        for i = 1, amountOfBlocks do
+            data = readSingleBlockData(file)
+            client.execute(
+                "execute /setblock " .. data[1] .. " " .. data[2] .. " " .. data[3] .. " " .. "planks" .. " " .. data[5]
+            )
+        end
+
+        file:close()
+    end
+end
+
+client.settings.addFunction("Load World", "worldFromFile", "Enter")
 
 ------------------------------------------------------------
 
@@ -88,7 +123,6 @@ function update()
         print(blocksSaved)
         coroutine.resume(initialScan)
     end
-
 end
 
 -- for degugging
@@ -104,9 +138,9 @@ function addToWorldScan(x, y, z)
     if block.id ~= 0 then
         blocksSaved = blocksSaved + 1
 
-        saveFile:writeInt(x)
-        saveFile:writeInt(y)
-        saveFile:writeInt(z)
+        saveFile:writeInt(x - centerX)
+        saveFile:writeInt(y - centerY)
+        saveFile:writeInt(z - centerZ)
         saveFile:writeUShort(block.id)
         saveFile:writeByte(block.data)
     end
@@ -246,15 +280,4 @@ THEN, EACH NEW LINE IS INFORMATION GATHERED IN ONE UPDATE CYCLE
 block updates; player position; player inventory; other stuff (other players+their inventory, other entities)...
 posX posY posZ blockId blockData                         playerX    playerY playerZ
 1000 100  0    12      2        , 1001 100 0 43 0, ... ; 990.123123 98.3235 23.34432 ; inventory stuff idk
-]]
-
-
---[[
-    static data (id 0):
-    ip, time
-
-    block changes (id 1):
-        amount of blocks (Int)
-
-        
 ]]
