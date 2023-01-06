@@ -16,31 +16,19 @@ importLib("blockFromId")
 -- end)
 
 start = false
+replayFile = nil
 
--- function startRec()
---     start = true
+-- function handleReplayFile(path)
+--     local file = fs.open(path, "r")
+--     if file == nil then return nil end
+
+--     while ~file:eof() do
+--         local packetId, packetData = readPacket(file)
+--         log(packetData)
+--         -- TODO: actually play back the replay
+--         -- probably in the update function though?
+--     end
 -- end
--- client.settings.addFunction("start", "startRec", "START")
-
-function readPosition(file)
-    local x = file:readFloat()
-    local y = file:readFloat()
-    local z = file:readFloat()
-
-    return x, y, z
-end
-
-function handleReplayFile(path)
-    local file = fs.open(path, "r")
-    if file == nil then return nil end
-
-    while ~file:eof() do
-        local packetId, packetData = readPacket(file)
-        log(packetData)
-        -- TODO: actually play back the replay
-        -- probably in the update function though?
-    end
-end
 
 function readPacket(file)
     local packetId = file:readByte()
@@ -48,15 +36,14 @@ function readPacket(file)
     if packetId == 1 then -- Blocks
         local blockslength = file:readUInt()
         for i = 0, blockslength do
-            -- !blocks positions will be an Int, not a float
-            local x, y, z = readPosition(file)
-            local blockId = file:readUInt()
+            local x, y, z = file:readInt(), file:readInt(), file:readInt()
+            local blockId = file:readUShort()
             local blockData = file:readByte()
 
-            table.insert(data, { x = x, y = y, z = z, blockId = blockId, blockData = blockData })
+            table.insert(data, { x = x, y = y, z = z, id = blockId, data = blockData })
         end
     elseif packetId == 2 then -- Player
-        x, y, z = readPosition(file)
+        x, y, z = file:readFloat(), file:readFloat(), file:readFloat()
         data = {
             x = x, y = y, z = z,
             playerId = file:readUInt(),
@@ -68,17 +55,20 @@ function readPacket(file)
     return packetId, data
 end
 
--- testFile = io.open("initialScanOnly.replay", "r")
--- data = testFile:read("a")
--- log(data)
--- testFile:close()
-
--- blocks = string.split(data, ",")
--- blockIndex = 1
-
 function update()
     if start == false then return nil end
-    -- local x, y, z, id, data = string.split(blocks[blockIndex], " ")
-    -- blockIndex = blockIndex + 1
-    -- client.execute("execute /setblock " .. x .. " " .. y .. " " .. z .. " " .. blockNameFromID(id) .. " " .. data)
+
+    replayFile = fs.open("./InitialScanTest.replay", "r")
+    if replayFile == nil then return nil end
+
+    if replayFile:eof() then return replayFile:close() end
+
+    local packetId, data = readPacket(replayFile)
+    if packetId == 1 then
+        -- Blocks
+        for _, block in pairs(data) do
+            client.execute("execute /setblock " .. block.x .. " " .. block.y .. " " .. block.z .. " " .. blockNameFromID(block.id) .. " " .. block.data)
+            -- sleep(10)
+        end
+    end
 end
