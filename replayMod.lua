@@ -4,16 +4,13 @@ description = "Record a section of your world/server, then watch it back later!"
 workingDir = "RoamingState/OnixClient/Scripts/Data/ReplayMod"
 
 importLib("logger")
--- importLib("blockFromId")
 
--- registerCommand("updateData", function() updateData() print("Updated data.") end)
+---@type BinaryFile|nil
+updatesFile = nil
+---@type BinaryFile|nil
+saveFile = nil
 
-function onEnable()
-    -- updateData()
-    print("enable")
-end
-
--- SETTINGS --------------------------------------------
+-- starts starts the coroutine to load the world into the file
 status = "Waiting to record."
 recording = false
 blockList = {}
@@ -23,9 +20,9 @@ function startRecording()
     endRecordingButton.visible = true
     status = "Recording..."
 
-    centerX = math.floor(px)
-    centerY = math.floor(py)
-    centerZ = math.floor(pz)
+    centerX = pxInt
+    centerY = pyInt
+    centerZ = pzInt
 
     fs.delete(fileName.value .. ".replay")
     saveFile = fs.open(fileName.value .. ".replay", 'w')
@@ -33,12 +30,14 @@ function startRecording()
 
     -- move the "cursor" so that there's space for the packet id and amount of blocks at the front
     saveFile:seek(5)
+
+    updatesFile = fs.open("updates.TEMP", "w")
 end
 
-updatesFile = nil
----@type BinaryFile|nil
-saveFile = nil
+startRecordingButton = client.settings.addFunction("Start Recording:", "startRecording", "Start")
 
+
+-- ends the recording, writes the block hash->name and data information, writes the amount of blocks in the initial scan
 function endRecording()
     recording = false
     startRecordingButton.visible = true
@@ -59,7 +58,7 @@ function endRecording()
     saveFile:writeUInt(arraySize)
     saveFile:writeUShort(arrayLength)
     print("Size of block list: " .. arraySize .. " length: " .. arrayLength)
-    
+
     -- print(tableToJson(blockList))
 
     saveFile:seek(0)
@@ -69,16 +68,19 @@ function endRecording()
     saveFile:writeUInt(blocksSaved)
 
     saveFile:close()
+    updatesFile:close()
 end
 
-client.settings.addTitle("status")
-startRecordingButton = client.settings.addFunction("Start Recording:", "startRecording", "Start")
 endRecordingButton = client.settings.addFunction("End Recording", "endRecording", "Save")
 endRecordingButton.visible = false
+
+
+client.settings.addTitle("status")
 fileName = client.settings.addNamelessTextbox("Save file name:", "Untitled")
 
+
+-- making a file of the initial scan that is readable for degugging
 function test()
-    -- making a file of the initial scan that is readable
     local input = fs.open(fileName.value .. ".replay", 'r')
     local output = io.open("text.txt", "w+")
     if input and output then
@@ -105,17 +107,21 @@ end
 
 client.settings.addFunction("Convert .replay to .txt", "test", "Enter")
 
+
+-- reads the file for a single block returns position and hash
 ---@param file BinaryFile
 function readSingleBlockData(file)
     local output = {}
-    table.insert(output, file:readInt()) --x
-    table.insert(output, file:readInt()) --y
-    table.insert(output, file:readInt()) --z
-    table.insert(output, file:readLong()) -- block hash -> to get name and data from registry
+
+    output.x = file:readInt()
+    output.y = file:readInt()
+    output.z = file:readInt()
+    output.hash = file:readLong() --block hash -> to get name and data from registry
 
     return output
 end
 
+-- returns [hash->block name+data] information stored in the file to be used when reading
 ---@param file BinaryFile
 function readBlockRegistry(file)
     local blockRegistry = {}
@@ -137,6 +143,7 @@ function readBlockRegistry(file)
     return blockRegistry
 end
 
+-- reads the file and sets blocks in the world
 function worldFromFile()
     local file = fs.open(fileName.value .. ".replay", "r")
     if file == nil then return nil end
@@ -150,24 +157,32 @@ function worldFromFile()
 
     for i = 1, amountOfBlocks do
         data = readSingleBlockData(file)
-        print(blockRegistry[data[4]].name)
+        -- print(blockRegistry[data[4]].name)
         client.execute(
-            "execute /setblock ~" .. data[1] .. " ~" .. data[2] .. " ~" .. data[3] .. " " .. blockRegistry[data[4]].name .. " " .. blockRegistry[data[4]].data
+            "execute /setblock ~" ..
+            data.x ..
+            " ~" ..
+            data.y ..
+            " ~" ..
+            data.z ..
+            " " ..
+            blockRegistry[data.hash].name ..
+            " " ..
+            blockRegistry[data.hash].data
         )
     end
 
     file:close()
 end
 
-client.settings.addFunction("Load World", "worldFromFile", "Enter")
-registerCommand("loadworld", function () loadWorld = true end) -- I'm on touchpad atm so this is less painful
-
 loadWorld = false
+client.settings.addFunction("Load World", "worldFromFile", "Enter")
+registerCommand("loadworld", function() loadWorld = true end) -- I'm on touchpad atm so this is less painful
 
-------------------------------------------------------------
 
-initialBlocksScannedPerUpdate = 10000
+initialBlocksScannedPerUpdate = 100
 function update()
+    pxInt, pyInt, pzInt = player.position()
     px, py, pz = player.pposition()
     pYaw, pPitch = player.rotation()
 
@@ -175,24 +190,59 @@ function update()
     if recording then
         print(blocksSaved)
         coroutine.resume(initialScan)
+
+        -- Signifies a new update cycle
+        updatesFile:writeUByte(255)
+
+        -- !UNTESTED
+        if #blockChangesThisUpdate > 0 then
+            -- signify block changes are starting
+            updatesFile:writeUByte(1)
+            -- the number of blocks to update
+            updatesFile:writeUInt(#blockChangesThisUpdate)
+            for _, block in pairs(blockChangesThisUpdate) do
+                updatesFile:writeInt(block.x - centerX)
+                updatesFile:writeInt(block.y - centerY)
+                updatesFile:writeInt(block.z - centerZ)
+                updatesFile:writeLong(block.hash)
+            end
+        end
     end
 
     if loadWorld then loadWorld = false worldFromFile() end
+
+    log(#blockChangesThisUpdate)
+    blockChangesThisUpdate = {}
 end
+
+blockChangesThisUpdate = {}
+-- detecting block changes
+event.listen("BlockChanged", function(x, y, z, newBlock, oldBlock)
+    if blockList[newBlock] == nil then
+        --  get block id and name, add to blocklist
+        local block = dimension.getBlock(x, y, z)
+        blockList[newBlock] = { name = block.name, data = block.data }
+    end
+    table.insert(blockChangesThisUpdate, { x = x, y = y, z = z, hash = newBlock })
+end)
 
 -- for degugging
 function set(x, y, z)
+    initalBlocksScanned = initalBlocksScanned + 1
     client.execute("execute /setblock " .. x .. " " .. y .. " " .. z .. " glass")
 end
 
 -- adds a block to the world scan table
 function addToWorldScan(x, y, z)
-    local block = dimension.getBlock(math.floor(x), math.floor(y), math.floor(z))
+    x = math.floor(x)
+    y = math.floor(y)
+    z = math.floor(z)
+    local block = dimension.getBlock(x, y, z)
     initalBlocksScanned = initalBlocksScanned + 1
 
     if block.name == "air" or block.name == "client_request_placeholder_block" then return nil end
 
-    if blockList[block.hash] == nil then blockList[block.hash] = {name = block.name, data = block.data} end
+    if blockList[block.hash] == nil then blockList[block.hash] = { name = block.name, data = block.data } end
 
     blocksSaved = blocksSaved + 1
 
@@ -201,8 +251,6 @@ function addToWorldScan(x, y, z)
     saveFile:writeInt(z - centerZ)
     saveFile:writeLong(block.hash)
 end
-
--- y = max(centerY - math.floor((r - 1) / 2), -worldBorder), min(centerY + math.floor((r - 1) / 2), worldBorder)
 
 -- get the world height border
 _versionSplit = string.split(client.mcversion, ".")
@@ -219,16 +267,18 @@ if _v[1] <= 1 and _v[2] < 18 then
 end
 --
 
+-- a coroutine loop that puts blocks from the world into a file
 initalBlocksScanned = 0 -- counts the amount of blocks scanned to be used to guide the coroutine
 blocksSaved = 0 -- this is different from the one above because it does not count air blocks, which do not get saved to the file
--- a coroutine loop that puts blocks from the world into a file
 initialScan = coroutine.create(function(...)
     for r = 1, 10000 do
         -- Z-axis
         for x = centerX - (r - 1), centerX + (r - 1) do
-            for y = centerY - math.floor((r - 1) / 2), centerY + math.floor((r - 1) / 2) do
+            for y = math.max(centerY - math.floor((r - 1) / 2), worldMinHeight), math.min(centerY +
+                math.floor((r - 1) / 2), worldMaxHeight) do
                 for i = -1, 1, 2 do
                     addToWorldScan(x, y, centerZ + (r - 1) * i)
+                    -- set(x, y, centerZ + (r - 1) * i)
                     if initalBlocksScanned % initialBlocksScannedPerUpdate == 0 then
                         coroutine.yield()
                     end
@@ -238,9 +288,11 @@ initialScan = coroutine.create(function(...)
 
         -- X-axis
         for z = centerZ - (r - 2), centerZ + (r - 2) do
-            for y = centerY - math.floor((r - 1) / 2), centerY + math.floor((r - 1) / 2) do
+            for y = math.max(centerY - math.floor((r - 1) / 2), worldMinHeight), math.min(centerY +
+                math.floor((r - 1) / 2), worldMaxHeight) do
                 for i = -1, 1, 2 do
                     addToWorldScan(centerX + (r - 1) * i, y, z)
+                    -- set(centerX + (r - 1) * i, y, z)
                     if initalBlocksScanned % initialBlocksScannedPerUpdate == 0 then
                         coroutine.yield()
                     end
@@ -249,13 +301,25 @@ initialScan = coroutine.create(function(...)
         end
 
         -- Y-axis
-
-        -- split into one for up, one for down
-        if r % 2 == 0 then
-            for x = centerX - (r - 3), centerX + (r - 3) do
-                for z = centerZ - (r - 3), centerZ + (r - 3) do
-                    for i = -1, 1, 2 do
-                        addToWorldScan(x, centerY + math.floor((r - 1) / 2) * i, z)
+        if centerY + math.floor((r - 1) / 2) <= worldMaxHeight then
+            if r % 2 == 0 then
+                for x = centerX - (r - 3), centerX + (r - 3) do
+                    for z = centerZ - (r - 3), centerZ + (r - 3) do
+                        addToWorldScan(x, centerY + math.floor((r - 1) / 2), z)
+                        -- set(x, centerY + math.floor((r - 1) / 2), z)
+                        if initalBlocksScanned % initialBlocksScannedPerUpdate == 0 then
+                            coroutine.yield()
+                        end
+                    end
+                end
+            end
+        end
+        if centerY + math.floor((r - 1) / 2) * -1 >= worldMinHeight then
+            if r % 2 == 0 then
+                for x = centerX - (r - 3), centerX + (r - 3) do
+                    for z = centerZ - (r - 3), centerZ + (r - 3) do
+                        addToWorldScan(x, centerY + math.floor((r - 1) / 2) * -1, z)
+                        -- set(x, centerY + math.floor((r - 1) / 2) * -1, z)
                         if initalBlocksScanned % initialBlocksScannedPerUpdate == 0 then
                             coroutine.yield()
                         end
@@ -267,48 +331,6 @@ initialScan = coroutine.create(function(...)
 end)
 
 --[[
-    perfect cube version:
-
-    co = coroutine.create(function(...)
-        for r = 1, 50, 1 do
-            -- Z-axis
-            for x = px - (r - 1), px + (r - 1) do
-                for y = py - (r - 1), py + (r - 1) do
-                    for i = -1, 1, 2 do
-                        set(x, y, pz + (r - 1) * i)
-                        coroutine.yield()
-                    end
-                end
-            end
-
-            -- X-axis
-            for z = pz - (r - 2), pz + (r - 2) do
-                for y = py - (r - 1), py + (r - 1) do
-                    for i = -1, 1, 2 do
-                        set(px + (r - 1) * i, y, z)
-                        coroutine.yield()
-                    end
-                end
-            end
-
-            -- Y-axis
-            for x = px - (r - 2), px + (r - 2) do
-                for z = pz - (r - 2), pz + (r - 2) do
-                    for i = -1, 1, 2 do
-                        set(x, py + (r - 1) * i, z)
-                        coroutine.yield()
-                    end
-                end
-            end
-        end
-    end)
-]]
-
---[[
-
-    TODO: make the y scan capped to the world height limits
-    TODO: make a seperate set of player xyz that are Ints, instead of rounding later?
-
     save the block update data for the initial load in one temp file
     save all the updates into another temp file
     then, when the save button is pressed, a new file is created (this will be the file that the user keeps to play back) it includes (in order)
@@ -316,24 +338,8 @@ end)
         the block updates to complete the packet
         all of the updates from the second temp file
 
-    add a grahpic telling you if you're recording and for how long
-    add a way to stop the world scan coroutine so that you can record two times in a row (something with errors?)
-        now, stopping recording and restarting it will just continue the same loop
+    *add a grahpic telling you if you're recording and for how long
 
-    scan start: starts the initial world scan starting at the player's inital position, then starts the smaller scan following the player
-    scan end: writes everything that has been stored into a file, formatted
-    player position can be interpolated
-]]
-
---[[
-(outdated now)
-
-INITIAL SCAN, ALL ONE LINE
-posX posY posZ blockId blockData
-1000 100  0    12      2        , 1001 100 0 43 0, ...
-
-THEN, EACH NEW LINE IS INFORMATION GATHERED IN ONE UPDATE CYCLE
-block updates; player position; player inventory; other stuff (other players+their inventory, other entities)...
-posX posY posZ blockId blockData                         playerX    playerY playerZ
-1000 100  0    12      2        , 1001 100 0 43 0, ... ; 990.123123 98.3235 23.34432 ; inventory stuff idk
+    !add a way to stop the world scan coroutine so that you can record two times in a row (something with errors?)
+        !now, stopping recording and restarting it will just continue the same loop
 ]]
