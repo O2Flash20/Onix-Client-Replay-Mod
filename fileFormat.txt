@@ -1,6 +1,10 @@
-0 (Static Data) [UByte]:
-    Length of replay (seconds) [UInt]
-    Time that the replay was taken (days since epoch?) [UShort] (it will work for the next 130 years lol)
+0 (Hash to block data and id information) [UByte]
+    For each block:
+        Hash [Long]
+        Name [String]
+        Data [Byte]
+    Size of the information in Bytes [UInt]
+    Amount of blocks there is information for [UShort]
 
 1 (Block Update) [UByte]:
     Number of  blocks to update [UInt]
@@ -8,7 +12,6 @@
         X position [Int]
         Y position [Int]
         Z position [Int]
-        Block id [UShort]
-        Data [Byte]
-
-2 ()
+        Hash [Long]
+        
+255 (New update cycle) [UByte]
