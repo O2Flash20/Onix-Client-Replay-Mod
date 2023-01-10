@@ -44,8 +44,8 @@ function endRecording()
     endRecordingButton.visible = false
     status = "Waiting to record."
 
-    -- Save blocks
-    saveFile:writeByte(0)
+    -- Save hash->name and data
+    saveFile:writeUByte(0)
     local arraySize = saveFile:tell()
     local arrayLength = 0
     for hash, block in pairs(blockList) do
@@ -59,11 +59,11 @@ function endRecording()
     saveFile:writeUShort(arrayLength)
     print("Size of block list: " .. arraySize .. " length: " .. arrayLength)
 
-    -- print(tableToJson(blockList))
 
+    -- start off the packet of the initial block update
     saveFile:seek(0)
     -- packet Id
-    saveFile:writeByte(1)
+    saveFile:writeUByte(1)
     -- Number of  blocks to update
     saveFile:writeUInt(blocksSaved)
 
@@ -79,30 +79,82 @@ client.settings.addTitle("status")
 fileName = client.settings.addNamelessTextbox("Save file name:", "Untitled")
 
 
--- making a file of the initial scan that is readable for degugging
+-- making a file that is readable for degugging
 function test()
-    local input = fs.open(fileName.value .. ".replay", 'r')
+    --reading the updates file
+    local input = fs.open("updates.TEMP", "r")
     local output = io.open("text.txt", "w+")
-    if input and output then
-        output:write(input:readByte())
-        local numBlocks = input:readUInt()
-        output:write("\n")
-        output:write(numBlocks)
-        output:write("\n")
-        for i = 1, numBlocks, 1 do
-            output:write(input:readInt())
-            output:write(" ")
-            output:write(input:readInt())
-            output:write(" ")
-            output:write(input:readInt())
-            output:write(" ")
-            output:write(input:readUShort())
-            output:write(" ")
-            output:write(input:readByte())
-            output:write("\n")
+
+    if input == nil or output == nil then return end
+
+    -- loop through all updates
+    while input:eof() == false do
+        output:write("\n") --new line
+        local id = input:readUByte() --get the packet id
+
+        if id == 255 then
+            output:write("____update____")
+        elseif id == 1 then -- a block update exists
+            output:write("BLOCK: ")
+            local numberOfBlocks = input:readUInt()
+            output:write("(" .. numberOfBlocks .. ") ")
+
+            if numberOfBlocks < 10 then
+                for i = 1, numberOfBlocks do
+                    output:write(input:readInt() .. " ")
+                    output:write(input:readInt() .. " ")
+                    output:write(input:readInt() .. " ")
+                    output:write(input:readLong() .. " ")
+                end
+            else
+                for i = 1, numberOfBlocks do
+                    output:write("Loop")
+                    input:readInt()
+                    input:readInt()
+                    input:readInt()
+                    input:readLong()
+                end
+            end
+        elseif id == 2 then -- this is a player update
+            output:write("PLAYER: ")
+            output:write(input:readFloat() .. " ")
+            output:write(input:readFloat() .. " ")
+            output:write(input:readFloat() .. " ")
+            output:write(input:readByte() .. " ")
+            output:write(input:readByte() .. " ")
+        else
+            output:write("Unknown id " .. id)
         end
-        output:close()
     end
+
+    input:close()
+    output:close()
+
+    --reading the initial scan file
+    --[[
+        local input = fs.open(fileName.value .. ".replay", 'r')
+        local output = io.open("text.txt", "w+")
+        if input and output then
+            output:write(input:readUByte())
+            local numBlocks = input:readUInt()
+            output:write("\n")
+            output:write(numBlocks)
+            output:write("\n")
+            for i = 1, numBlocks, 1 do
+                output:write(input:readInt())
+                output:write(" ")
+                output:write(input:readInt())
+                output:write(" ")
+                output:write(input:readInt())
+                output:write(" ")
+                output:write(input:readUShort())
+                output:write(" ")
+                output:write(input:readByte())
+                output:write("\n")
+            end
+            output:close()
+        end
+    ]]
 end
 
 client.settings.addFunction("Convert .replay to .txt", "test", "Enter")
@@ -194,7 +246,7 @@ function update()
         -- Signifies a new update cycle
         updatesFile:writeUByte(255)
 
-        -- !UNTESTED
+        -- write block changes
         if #blockChangesThisUpdate > 0 then
             -- signify block changes are starting
             updatesFile:writeUByte(1)
@@ -207,23 +259,33 @@ function update()
                 updatesFile:writeLong(block.hash)
             end
         end
+
+        -- write player position and rotation
+        updatesFile:writeUByte(2)
+        updatesFile:writeFloat(px)
+        updatesFile:writeFloat(py)
+        updatesFile:writeFloat(pz)
+        updatesFile:writeByte(math.floor(pYaw / 1.44))
+        updatesFile:writeByte(math.floor(pPitch))
     end
 
     if loadWorld then loadWorld = false worldFromFile() end
 
-    log(#blockChangesThisUpdate)
+    -- log(#blockChangesThisUpdate)
+    log({ math.floor(pYaw / 1.44), math.floor(pPitch) })
     blockChangesThisUpdate = {}
 end
 
 blockChangesThisUpdate = {}
 -- detecting block changes
 event.listen("BlockChanged", function(x, y, z, newBlock, oldBlock)
+    print(newBlock.hash)
     if blockList[newBlock] == nil then
         --  get block id and name, add to blocklist
         local block = dimension.getBlock(x, y, z)
         blockList[newBlock] = { name = block.name, data = block.data }
     end
-    table.insert(blockChangesThisUpdate, { x = x, y = y, z = z, hash = newBlock })
+    table.insert(blockChangesThisUpdate, { x = x, y = y, z = z, hash = newBlock.hash })
 end)
 
 -- for degugging
