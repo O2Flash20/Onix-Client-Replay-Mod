@@ -1,6 +1,10 @@
-0 (Static Data) [UByte]:
-    Length of replay (seconds) [UInt]
-    Time that the replay was taken (days since epoch?) [UShort] (it will work for the next 130 years lol)
+0 (Hash to block data and id information) [UByte]
+    For each block:
+        Hash [Long]
+        Name [String]
+        Data [Byte]
+    Size of the information in Bytes [UInt]
+    Amount of blocks there is information for [UShort]
 
 1 (Block Update) [UByte]:
     Number of  blocks to update [UInt]
@@ -8,7 +12,13 @@
         X position [Int]
         Y position [Int]
         Z position [Int]
-        Block id [UShort]
-        Data [Byte]
+        Hash [Long]
+        
+2 (Player position and rotation) [UBtye]: * it will be a problem in the future that this only applies to "you" *
+    X position [Float]
+    Y position [Float]
+    Z position [Float]
+    Yaw [Byte] *to get the correct yaw, multiply this number by 1.44 when reading (it is "compressed" before written)*
+    Pitch [Byte]
 
-2 ()
+255 (New update cycle) [UByte]
