@@ -15,6 +15,7 @@ status = "Waiting to record."
 recording = false
 blockList = {}
 function startRecording()
+    blockList = {}
     recording = true
     startRecordingButton.visible = false
     endRecordingButton.visible = true
@@ -36,13 +37,14 @@ end
 
 startRecordingButton = client.settings.addFunction("Start Recording:", "startRecording", "Start")
 
-
 -- ends the recording, writes the block hash->name and data information, writes the amount of blocks in the initial scan
 function endRecording()
     recording = false
     startRecordingButton.visible = true
     endRecordingButton.visible = false
     status = "Waiting to record."
+
+    -- * MERGE THE TEMP FILE IN RIGHT HERE
 
     -- Save hash->name and data
     saveFile:writeUByte(0)
@@ -227,21 +229,29 @@ function worldFromFile()
     file:close()
 end
 
-loadWorld = false
+loading = false
 client.settings.addFunction("Load World", "worldFromFile", "Enter")
-registerCommand("loadworld", function() loadWorld = true end) -- I'm on touchpad atm so this is less painful
+registerCommand("loading", function() loading = true end) -- I'm on touchpad atm so this is less painful
 
-
-initialBlocksScannedPerUpdate = 100
+scanShouldStop = false
+lastWasRecoding = false --Keeps track of if the last update frame was recording or not. If it used to be recording but now isn't, the initial scan coroutine will be called one last time, but it will be reset to the start for next time.
+initialBlocksScannedPerUpdate = 1000
 function update()
     pxInt, pyInt, pzInt = player.position()
     px, py, pz = player.pposition()
     pYaw, pPitch = player.rotation()
 
-    -- initial scan
+    if lastWasRecoding == true and recording == false then
+        scanShouldStop = true
+        coroutine.resume(initialScan)
+        scanShouldStop = false
+    end
+
     if recording then
+        -- initial scan
         print(blocksSaved)
         coroutine.resume(initialScan)
+
 
         -- Signifies a new update cycle
         updatesFile:writeUByte(255)
@@ -269,17 +279,21 @@ function update()
         updatesFile:writeByte(math.floor(pPitch))
     end
 
-    if loadWorld then loadWorld = false worldFromFile() end
+    if loading then
+        loading = false
+        worldFromFile()
 
-    -- log(#blockChangesThisUpdate)
-    log({ math.floor(pYaw / 1.44), math.floor(pPitch) })
+        -- coroutine.resume(replayLoad) or something
+
+    end
     blockChangesThisUpdate = {}
+
+    lastWasRecoding = recording
 end
 
 blockChangesThisUpdate = {}
 -- detecting block changes
 event.listen("BlockChanged", function(x, y, z, newBlock, oldBlock)
-    print(newBlock.hash)
     if blockList[newBlock] == nil then
         --  get block id and name, add to blocklist
         local block = dimension.getBlock(x, y, z)
@@ -332,13 +346,24 @@ end
 -- a coroutine loop that puts blocks from the world into a file
 initalBlocksScanned = 0 -- counts the amount of blocks scanned to be used to guide the coroutine
 blocksSaved = 0 -- this is different from the one above because it does not count air blocks, which do not get saved to the file
-initialScan = coroutine.create(function(...)
-    for r = 1, 10000 do
+SCANLIMIT = 100
+limitReached = false
+initialScan = coroutine.create(function()
+    ::start::
+    print("SCAN RESTARTED")
+    initalBlocksScanned = 0
+    blocksSaved = 0
+    coroutine.yield()
+
+    for r = 1, SCANLIMIT do
         -- Z-axis
         for x = centerX - (r - 1), centerX + (r - 1) do
             for y = math.max(centerY - math.floor((r - 1) / 2), worldMinHeight), math.min(centerY +
                 math.floor((r - 1) / 2), worldMaxHeight) do
                 for i = -1, 1, 2 do
+
+                    if scanShouldStop then goto start end
+
                     addToWorldScan(x, y, centerZ + (r - 1) * i)
                     -- set(x, y, centerZ + (r - 1) * i)
                     if initalBlocksScanned % initialBlocksScannedPerUpdate == 0 then
@@ -353,6 +378,9 @@ initialScan = coroutine.create(function(...)
             for y = math.max(centerY - math.floor((r - 1) / 2), worldMinHeight), math.min(centerY +
                 math.floor((r - 1) / 2), worldMaxHeight) do
                 for i = -1, 1, 2 do
+
+                    if scanShouldStop then goto start end
+
                     addToWorldScan(centerX + (r - 1) * i, y, z)
                     -- set(centerX + (r - 1) * i, y, z)
                     if initalBlocksScanned % initialBlocksScannedPerUpdate == 0 then
@@ -367,6 +395,9 @@ initialScan = coroutine.create(function(...)
             if r % 2 == 0 then
                 for x = centerX - (r - 3), centerX + (r - 3) do
                     for z = centerZ - (r - 3), centerZ + (r - 3) do
+
+                        if scanShouldStop then goto start end
+
                         addToWorldScan(x, centerY + math.floor((r - 1) / 2), z)
                         -- set(x, centerY + math.floor((r - 1) / 2), z)
                         if initalBlocksScanned % initialBlocksScannedPerUpdate == 0 then
@@ -380,6 +411,9 @@ initialScan = coroutine.create(function(...)
             if r % 2 == 0 then
                 for x = centerX - (r - 3), centerX + (r - 3) do
                     for z = centerZ - (r - 3), centerZ + (r - 3) do
+
+                        if scanShouldStop then goto start end
+
                         addToWorldScan(x, centerY + math.floor((r - 1) / 2) * -1, z)
                         -- set(x, centerY + math.floor((r - 1) / 2) * -1, z)
                         if initalBlocksScanned % initialBlocksScannedPerUpdate == 0 then
@@ -390,18 +424,16 @@ initialScan = coroutine.create(function(...)
             end
         end
     end
+
+    while true do
+        if scanShouldStop then goto start
+        else coroutine.yield() end
+    end
 end)
 
 --[[
-    save the block update data for the initial load in one temp file
-    save all the updates into another temp file
-    then, when the save button is pressed, a new file is created (this will be the file that the user keeps to play back) it includes (in order)
-        the amount of blocks in the inital update (included in the block update packet)
-        the block updates to complete the packet
-        all of the updates from the second temp file
-
-    *add a grahpic telling you if you're recording and for how long
-
-    !add a way to stop the world scan coroutine so that you can record two times in a row (something with errors?)
-        !now, stopping recording and restarting it will just continue the same loop
+    put the updates and inital file into one (shouldn't be too hard)
+    add inventory stuff to updates
+    do a demo of replaying (load coroutine)
+    add a graphic telling you if you're recording and for how long
 ]]
